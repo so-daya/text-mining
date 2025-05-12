@@ -1,0 +1,9 @@
+streamlit
+mecab-python3==1.0.9
+pandas
+wordcloud
+matplotlib
+networkx
+pyvis
+numpy
+japanize-matplotlib
