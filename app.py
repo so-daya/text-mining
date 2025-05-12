@@ -10,7 +10,8 @@ from pyvis.network import Network
 import re
 import os
 import numpy as np
-import japanize_matplotlib # Matplotlibの日本語化のため (requirements.txt にも追加)
+# import japanize_matplotlib # Matplotlibの日本語化のため (requirements.txt にも追加)
+import matplotlib.font_manager as fm # ← これを追加
 from itertools import combinations # 共起ネットワークで使用
 from IPython.core.display import HTML # PyvisのHTML表示に使う場合があるが、Streamlitではst.components.v1.html
 
