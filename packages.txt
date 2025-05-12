@@ -1,0 +1,4 @@
+mecab
+mecab-ipadic-utf8
+libmecab-dev
+fonts-ipafont-gothic
