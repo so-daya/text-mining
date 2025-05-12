@@ -38,27 +38,46 @@ def initialize_mecab_tagger():
 
 tagger = initialize_mecab_tagger()
 
-# --- フォントパスの最終決定 ---
-FONT_PATH_FINAL = FONT_PATH_PRIMARY
-if 'mecab_tagger_initialized' in st.session_state and st.session_state['mecab_tagger_initialized']: # MeCab初期化成功時のみフォントチェック
-    if not os.path.exists(FONT_PATH_PRIMARY):
-        st.warning(f"指定された日本語フォント '{FONT_PATH_PRIMARY}' が見つかりません。japanize_matplotlibのデフォルトフォントで代替を試みます。")
-        try:
-            alt_font_path = japanize_matplotlib.get_font_path() # これもフォントがないとエラーになる可能性
-            if os.path.exists(alt_font_path):
-                FONT_PATH_FINAL = alt_font_path
-                st.info(f"代替フォントとして '{FONT_PATH_FINAL}' を使用します。")
-            else:
-                st.error("代替フォントも見つかりませんでした。ワードクラウドやグラフの日本語表示に問題が出る可能性があります。")
-                FONT_PATH_FINAL = None 
-        except Exception as e_font:
-            st.error(f"代替フォントの取得中にエラーが発生しました: {e_font}")
-            FONT_PATH_FINAL = None
-    else:
-        st.info(f"日本語フォントとして '{FONT_PATH_FINAL}' を使用します。")
-else:
-    FONT_PATH_FINAL = None # MeCabが使えないならフォントも不要な場合が多い
+# app.py のフォントパス決定部分の修正案
 
+# ... (MECABRC_PATH, DICTIONARY_PATH, TAGGER_OPTIONS, initialize_mecab_tagger() はそのまま) ...
+tagger = initialize_mecab_tagger() # 先にMeCabを初期化
+
+# --- フォントパスの最終決定 ---
+FONT_PATH_FINAL = None
+FONT_PATH_PRIMARY = '/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf'
+
+if os.path.exists(FONT_PATH_PRIMARY):
+    FONT_PATH_FINAL = FONT_PATH_PRIMARY
+    st.info(f"日本語フォントとして '{FONT_PATH_FINAL}' を使用します。")
+else:
+    st.warning(f"指定されたIPAフォント '{FONT_PATH_PRIMARY}' が見つかりません。japanize_matplotlibのフォントで代替を試みます。")
+    try:
+        # japanize_matplotlib のインポートとフォントパス取得をここで行う
+        import japanize_matplotlib 
+        alt_font_path = japanize_matplotlib.get_font_path()
+        if os.path.exists(alt_font_path):
+            FONT_PATH_FINAL = alt_font_path
+            st.info(f"japanize_matplotlibによる代替フォントとして '{FONT_PATH_FINAL}' を使用します。")
+        else:
+            st.error("japanize_matplotlibの代替フォントも見つかりませんでした。")
+    except ImportError as e_import_jm: # japanize_matplotlib のインポート自体が失敗する場合
+        st.error(f"japanize_matplotlibのインポートに失敗しました: {e_import_jm}")
+        st.error("`requirements.txt` に `japanize-matplotlib` が正しく記述されているか確認してください。")
+    except Exception as e_font: # get_font_path() で他のエラーが出る場合
+        st.error(f"japanize_matplotlibからのフォントパス取得中にエラーが発生しました: {e_font}")
+
+if FONT_PATH_FINAL is None:
+    st.error("有効な日本語フォントが見つからないため、ワードクラウドやグラフの日本語表示に問題が出る可能性があります。")
+else:
+    # matplotlibの日本語設定 (japanize_matplotlibをインポートしただけでは適用されない場合があるため明示的に)
+    # ただし、japanize_matplotlibをインポートするだけでrcParamsが更新されるはずなので、
+    # ここでの plt.rcParams の設定は不要な場合も多い。
+    # import japanize_matplotlib を実行した時点で日本語化は試みられる。
+    pass
+
+# ... (以降の分析関数の定義やStreamlit UIの定義は続く) ...
+# WordCloudやmatplotlibの描画関数に渡すfont_pathは FONT_PATH_FINAL を使う
 
 # --- 分析関数の定義 ---
 
