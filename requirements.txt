@@ -6,4 +6,4 @@ matplotlib
 networkx
 pyvis
 numpy
-japanize-matplotlib
+# japanize-matplotlib # ← この行を削除またはコメントアウト
