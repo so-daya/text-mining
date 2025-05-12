@@ -23,16 +23,15 @@ from itertools import combinations
 MECABRC_PATH = "/etc/mecabrc"
 DICTIONARY_PATH = "/var/lib/mecab/dic/ipadic-utf8"
 TAGGER_OPTIONS = f"-r {MECABRC_PATH} -d {DICTIONARY_PATH}"
-# packages.txtでfonts-ipafont-gothicをインストールした場合のIPA Pゴシックのパス
 FONT_PATH_PRIMARY = '/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf' 
 
 # --- MeCab Taggerの初期化 (キャッシュ利用) ---
-@st.cache_resource # Streamlitの新しいキャッシュデコレータ
+@st.cache_resource
 def initialize_mecab_tagger():
     try:
         tagger_obj = MeCab.Tagger(TAGGER_OPTIONS)
-        tagger_obj.parse('') # 初期化のおまじない
-        st.session_state['mecab_tagger_initialized'] = True # 初期化成功フラグ
+        tagger_obj.parse('') 
+        st.session_state['mecab_tagger_initialized'] = True
         print("MeCab Tagger initialized successfully via cache.")
         return tagger_obj
     except Exception as e_init:
@@ -48,23 +47,22 @@ FONT_PATH_FINAL = None
 if 'mecab_tagger_initialized' in st.session_state and st.session_state['mecab_tagger_initialized']:
     if os.path.exists(FONT_PATH_PRIMARY):
         FONT_PATH_FINAL = FONT_PATH_PRIMARY
-        st.sidebar.info(f"日本語フォント: {os.path.basename(FONT_PATH_FINAL)}") # サイドバーに情報表示
+        st.sidebar.info(f"日本語フォント: {os.path.basename(FONT_PATH_FINAL)}")
         try:
-            # Matplotlibにフォントパスを登録し、デフォルトフォントとして設定
             font_entry = fm.FontEntry(fname=FONT_PATH_FINAL, name=os.path.splitext(os.path.basename(FONT_PATH_FINAL))[0])
-            fm.fontManager.ttflist.append(font_entry)
+            # fontManager.ttflist に重複して追加しないようにチェック
+            if font_entry.name not in [f.name for f in fm.fontManager.ttflist]:
+                 fm.fontManager.ttflist.append(font_entry)
             plt.rcParams['font.family'] = font_entry.name
             print(f"Matplotlibのフォントとして {font_entry.name} を設定しました。")
         except Exception as e_font_setting:
             st.sidebar.error(f"Matplotlibフォント設定エラー: {e_font_setting}")
-            # FONT_PATH_FINAL はそのまま使うが、matplotlibでの日本語表示は期待できない
     else:
         st.sidebar.error(f"指定IPAフォント '{FONT_PATH_PRIMARY}' が見つかりません。")
-        # 代替フォントとしてシステムが認識できるものを探す (より汎用的な方法)
         try:
             font_names_ja = [f.name for f in fm.fontManager.ttflist if any(lang in f.name.lower() for lang in ['ipagp', 'ipag', 'takao', 'noto sans cjk jp', 'hiragino'])]
             if font_names_ja:
-                FONT_PATH_FINAL = fm.findfont(fm.FontProperties(family=font_names_ja[0])) # 最初に見つかった日本語フォント
+                FONT_PATH_FINAL = fm.findfont(fm.FontProperties(family=font_names_ja[0]))
                 plt.rcParams['font.family'] = font_names_ja[0]
                 st.sidebar.info(f"代替日本語フォントとして '{font_names_ja[0]}' ({FONT_PATH_FINAL}) を使用します。")
                 print(f"Matplotlibの代替フォントとして {font_names_ja[0]} を設定しました。")
@@ -95,29 +93,47 @@ def perform_morphological_analysis(text_input, tagger_instance):
         node = node.next
     return all_morphemes
 
+# ★★★ generate_word_report 関数を修正 ★★★
 def generate_word_report(all_morphemes, target_pos_list, stop_words_set):
-    if not all_morphemes: return pd.DataFrame(), 0, 0
+    if not all_morphemes: 
+        return pd.DataFrame(), 0, 0
+    
     report_target_morphemes = []
     for m in all_morphemes:
         if m['品詞'] in target_pos_list and m['原形'] not in stop_words_set:
             if m['品詞'] == '名詞' and m['品詞細分類1'] in ['非自立', '数', '代名詞', '接尾', 'サ変接続', '副詞可能']:
                 continue
             report_target_morphemes.append(m)
-    if not report_target_morphemes: return pd.DataFrame(), len(all_morphemes), 0
+
+    if not report_target_morphemes: 
+        return pd.DataFrame(), len(all_morphemes), 0
+        
     word_counts = Counter(m['原形'] for m in report_target_morphemes)
     report_data = []
-    representative_info_for_report = {m['原形']: m for m in reversed(report_target_morphemes)}
+    
+    # 原形ごとに最初の出現時の品詞情報などを代表として保持
+    representative_info_for_report = {}
+    for m in reversed(report_target_morphemes): 
+        if m['原形'] not in representative_info_for_report:
+            # レポートに必要な情報のみを代表情報として格納
+            representative_info_for_report[m['原形']] = {'品詞': m['品詞']}
+            
     total_all_morphemes_count_for_freq = len(all_morphemes)
     total_report_target_morphemes_count = sum(word_counts.values())
 
     for rank, (word, count) in enumerate(word_counts.most_common(), 1):
-        info = representative_info_for_report.get(word, {})
+        info = representative_info_for_report.get(word, {}) 
         frequency = (count / total_all_morphemes_count_for_freq) * 100 if total_all_morphemes_count_for_freq > 0 else 0
         report_data.append({
-            '順位': rank, '単語 (原形)': word, '出現数': count,
-            '出現頻度 (%)': round(frequency, 3), '品詞': info.get('品詞', ''),
-            '品詞細分類1': info.get('品詞細分類1', ''), '代表的な表層形': info.get('表層形', ''),
-            '代表的な読み': info.get('読み', '')
+            '順位': rank,
+            '単語 (原形)': word,
+            '出現数': count,
+            '出現頻度 (%)': round(frequency, 3),
+            '品詞': info.get('品詞', '')
+            # --- 以下の項目を削除 ---
+            # '品詞細分類1': info.get('品詞細分類1', ''),
+            # '代表的な表層形': info.get('表層形', ''),
+            # '代表的な読み': info.get('読み', '')
         })
     return pd.DataFrame(report_data), total_all_morphemes_count_for_freq, total_report_target_morphemes_count
 
@@ -215,7 +231,7 @@ def perform_kwic_search(all_morphemes, keyword_str, search_key_type_str, window_
     if not keyword_str.strip() or not all_morphemes: return []
     kwic_results_data = []
     for i, morpheme_item in enumerate(all_morphemes):
-        if morpheme_item[search_key_type_str].lower() == keyword_str.lower(): # 検索時に大文字小文字を区別しないように変更
+        if morpheme_item[search_key_type_str].lower() == keyword_str.lower():
             left_start_idx = max(0, i - window_int)
             left_ctx_str = "".join(m['表層形'] for m in all_morphemes[left_start_idx:i])
             kw_surface = morpheme_item['表層形']
@@ -225,10 +241,11 @@ def perform_kwic_search(all_morphemes, keyword_str, search_key_type_str, window_
     return kwic_results_data
 
 # --- Streamlit UIのメイン部分 ---
+# (st.title, st.markdown, DEFAULT_STOP_WORDS_SET, サイドバーのUI定義は前回と同様なので省略しません)
+
 st.title("テキストマイニングツール (Streamlit版)")
 st.markdown("日本語テキストを入力して、形態素解析、単語レポート、ワードクラウド、共起ネットワーク、KWIC検索を実行します。")
 
-# --- デフォルトストップワードとUI ---
 DEFAULT_STOP_WORDS_SET = {
     "する", "ある", "いる", "なる", "いう", "できる", "思う", "やる", "ない", "よい", "良い",
     "大きい", "小さい", "高い", "低い", "嬉しい", "楽しい", "悲しい", "同じ", "様々",
@@ -239,8 +256,6 @@ DEFAULT_STOP_WORDS_SET = {
 
 st.sidebar.header("⚙️ 分析オプション")
 st.sidebar.markdown("**品詞選択 (各分析共通)**")
-# 共通の対象品詞リストを使うか、個別に設定するか選択できるようにする
-# ここでは簡略化のため、レポート、WC、Netで似たようなデフォルトを設定
 default_target_pos = ['名詞', '動詞', '形容詞']
 report_target_pos_selected = st.sidebar.multiselect("単語レポート: 対象品詞", ['名詞', '動詞', '形容詞', '副詞', '感動詞', '連体詞'], default=default_target_pos)
 wc_target_pos_selected = st.sidebar.multiselect("ワードクラウド: 対象品詞", ['名詞', '動詞', '形容詞', '副詞', '感動詞'], default=default_target_pos)
@@ -252,7 +267,7 @@ custom_stopwords_input_str = st.sidebar.text_area("共通ストップワード (
                                              help="デフォルトのストップワードに加えて、ここに入力した単語も除外されます。")
 final_stop_words_set = DEFAULT_STOP_WORDS_SET.copy()
 if custom_stopwords_input_str.strip():
-    custom_list_sw = [word.strip().lower() for word in re.split(r'[,\n]', custom_stopwords_input_str) if word.strip()] # 小文字化して統一
+    custom_list_sw = [word.strip().lower() for word in re.split(r'[,\n]', custom_stopwords_input_str) if word.strip()]
     final_stop_words_set.update(custom_list_sw)
 st.sidebar.caption(f"適用される総ストップワード数: {len(final_stop_words_set)}")
 
@@ -261,13 +276,11 @@ st.sidebar.markdown("**共起ネットワーク詳細設定**")
 network_node_min_freq_val = st.sidebar.slider("ノード最低出現数:", 1, 20, 2, key="net_node_freq_slider_main")
 network_edge_min_freq_val = st.sidebar.slider("エッジ最低共起数:", 1, 10, 2, key="net_edge_freq_slider_main")
 
-# --- メイン画面: テキスト入力と実行ボタン ---
 main_text_input_area = st.text_area("📝 分析したい日本語テキストをここに入力してください:", height=250, 
                              value="これはStreamlitを使用して作成したテキスト分析ツールです。日本語の形態素解析を行い、単語の出現頻度レポート、ワードクラウド、共起ネットワーク、そしてKWIC（文脈付きキーワード検索）などを試すことができます。様々な文章で分析を実行してみてください。")
 
 analyze_button_clicked = st.button("分析実行", type="primary", use_container_width=True)
 
-# --- 分析結果表示エリア ---
 if analyze_button_clicked:
     if not main_text_input_area.strip():
         st.warning("分析するテキストを入力してください。")
@@ -291,6 +304,7 @@ if analyze_button_clicked:
                     df_report_to_show, total_morphs, total_target_morphs = generate_word_report(morphemes_data_list, report_target_pos_selected, final_stop_words_set)
                     st.caption(f"総形態素数: {total_morphs} | レポート対象の異なり語数: {len(df_report_to_show)} | レポート対象の延べ語数: {total_target_morphs}")
                     if not df_report_to_show.empty:
+                        # ★★★ ここで表示するDataFrameの列が generate_word_report 関数で削減されていることを確認 ★★★
                         st.dataframe(df_report_to_show.style.bar(subset=['出現数'], align='left', color='#90EE90')
                                      .format({'出現頻度 (%)': "{:.3f}%"}))
                     else:
@@ -323,40 +337,33 @@ if analyze_button_clicked:
             
             with tab_kwic_view:
                 st.subheader("KWIC検索 (文脈付きキーワード検索)")
-                # セッション状態でKWICの入力値を保持する試み (タブを切り替えても消えないように)
                 if 'kwic_keyword' not in st.session_state: st.session_state.kwic_keyword = ""
                 if 'kwic_mode_idx' not in st.session_state: st.session_state.kwic_mode_idx = 0
                 if 'kwic_window_val' not in st.session_state: st.session_state.kwic_window_val = 5
 
                 kwic_keyword_input_val = st.text_input("KWIC検索キーワード:", value=st.session_state.kwic_keyword, placeholder="検索したい単語(原形推奨)...", key="kwic_keyword_input_field")
-                st.session_state.kwic_keyword = kwic_keyword_input_val # 入力値をセッション状態に保存
+                st.session_state.kwic_keyword = kwic_keyword_input_val
 
                 kwic_search_mode_options_list = ("原形一致", "表層形一致")
                 kwic_search_mode_selected_val = st.radio("KWIC検索モード:", kwic_search_mode_options_list, index=st.session_state.kwic_mode_idx, key="kwic_mode_radio_field")
                 st.session_state.kwic_mode_idx = kwic_search_mode_options_list.index(kwic_search_mode_selected_val)
 
-
                 kwic_window_val_set = st.slider("KWIC表示文脈の形態素数 (前後各):", 1, 15, st.session_state.kwic_window_val, key="kwic_window_slider_field")
                 st.session_state.kwic_window_val = kwic_window_val_set
 
-
                 if kwic_keyword_input_val.strip():
                     search_key_type_for_kwic_val = '原形' if kwic_search_mode_selected_val == "原形一致" else '表層形'
-                    # 検索キーワードも小文字化して比較する（ストップワードも小文字化しているため）
-                    kw_to_search = kwic_keyword_input_val.strip().lower()
-                    # 形態素リストの原形/表層形も小文字で比較するか、元のままにするかは設計次第
-                    # ここでは、検索キーワードのみ小文字化し、形態素リスト側は元のまま（ただしストップワードは小文字で比較）
-
+                    kw_to_search = kwic_keyword_input_val.strip() # KWIC検索関数側で小文字化はしない想定（検索語はそのまま使う）
+                    
                     with st.spinner(f"「{kw_to_search}」を検索中..."):
-                         # KWIC検索関数に渡すキーワードは、元の入力のstrip()されたものを使う
-                        results_kwic_list_data = perform_kwic_search(morphemes_data_list, kwic_keyword_input_val.strip(), search_key_type_for_kwic_val, kwic_window_val_set)
+                        results_kwic_list_data = perform_kwic_search(morphemes_data_list, kw_to_search, search_key_type_for_kwic_val, kwic_window_val_set)
                     if results_kwic_list_data:
-                        st.write(f"「{kwic_keyword_input_val.strip()}」の検索結果 ({len(results_kwic_list_data)}件):")
+                        st.write(f"「{kw_to_search}」の検索結果 ({len(results_kwic_list_data)}件):")
                         df_kwic_to_display_final = pd.DataFrame(results_kwic_list_data)
                         st.dataframe(df_kwic_to_display_final)
                     else:
-                        st.info(f"「{kwic_keyword_input_val.strip()}」は見つかりませんでした（現在の検索モードにおいて）。")
+                        st.info(f"「{kw_to_search}」は見つかりませんでした（現在の検索モードにおいて）。")
 
 # --- フッター情報 ---
 st.sidebar.markdown("---")
-st.sidebar.info("テキストマイニングツール (Streamlit版)")
+st.sidebar.info("テキストマイニングツール (Streamlit版) v0.1")
