@@ -64,8 +64,10 @@ def initialize_mecab_tagger_to_session():
         print("MeCab Tagger initialized and stored in session_state.")
         return tagger_obj 
     except Exception as e_init:
-        st.error(f"MeCab Taggerの初期化に失敗しました: {e_init}")
-        st.error("リポジトリに `packages.txt` が正しく設定されているか確認してください。")
+        # UIスレッド外でst要素を直接呼び出すのは避けるべきことがあるが、初期化エラーは重要なので表示
+        # st.error(f"MeCab Taggerの初期化に失敗しました: {e_init}") 
+        # st.error("リポジトリに `packages.txt` が正しく設定されているか確認してください。")
+        print(f"CRITICAL: MeCab Taggerの初期化に失敗しました: {e_init}") # ログに記録
         st.session_state['mecab_tagger_initialized'] = False
         if 'tagger_object' in st.session_state: del st.session_state['tagger_object']
         return None
@@ -240,13 +242,11 @@ wc_target_pos_selected = st.sidebar.multiselect("ワードクラウド: 対象�
 net_target_pos_selected = st.sidebar.multiselect("共起Net: 対象品詞", ['名詞', '動詞', '形容詞'], default=default_target_pos)
 
 st.sidebar.markdown("**ストップワード設定**")
-# ★★★ DEFAULT_STOP_WORDS_SET をテキストエリアの初期値として表示 (カンマ区切り) ★★★
 default_stopwords_display_str = ", ".join(sorted(list(DEFAULT_STOP_WORDS_SET)))
 custom_stopwords_input_str_from_ui = st.sidebar.text_area("共通ストップワード (原形をカンマや改行区切りで編集してください):", 
-                                             value=default_stopwords_display_str, # 初期値を設定
+                                             value=default_stopwords_display_str, 
                                              height=250, 
                                              help="ここに入力された単語（原形）がストップワードとして処理されます。")
-# ★★★ テキストエリアの内容をそのまま最終的なストップワードセットとして使用 ★★★
 final_stop_words_set_for_analysis = set() 
 if custom_stopwords_input_str_from_ui.strip():
     custom_list_sw_from_ui = [word.strip().lower() for word in re.split(r'[,\n]', custom_stopwords_input_str_from_ui) if word.strip()]
@@ -290,6 +290,7 @@ if analyze_button_clicked_event:
                     df_report_to_show, total_morphs, total_target_morphs = generate_word_report(morphemes_data_list_result, report_target_pos_selected, final_stop_words_set_for_analysis)
                     st.caption(f"総形態素数: {total_morphs} | レポート対象の異なり語数: {len(df_report_to_show)} | レポート対象の延べ語数: {total_target_morphs}")
                     if not df_report_to_show.empty:
+                        # ★★★ ここで出現数の列にミニグラフが適用されます ★★★
                         st.dataframe(df_report_to_show.style.bar(subset=['出現数'], align='left', color='#90EE90')
                                      .format({'出現頻度 (%)': "{:.3f}%"}))
                     else: 
@@ -344,4 +345,4 @@ if analyze_button_clicked_event:
 
 # --- フッター情報 ---
 st.sidebar.markdown("---")
-st.sidebar.info("テキストマイニングツール (Streamlit版) v0.6-final")
+st.sidebar.info("テキストマイニングツール (Streamlit版) v0.7-stopwords_revised")
