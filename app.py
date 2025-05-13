@@ -48,7 +48,7 @@ DICTIONARY_PATH = "/var/lib/mecab/dic/ipadic-utf8"
 
 TAGGER_OPTIONS = f"-r {MECABRC_PATH} -d {DICTIONARY_PATH}"
 
-FONT_PATH_PRIMARY = '/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf' 
+FONT_PATH_PRIMARY = '/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf'
 
 
 
