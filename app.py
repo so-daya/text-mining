@@ -10,110 +10,79 @@ import pandas as pd
 from collections import Counter
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm # matplotlibのフォント管理
+# import matplotlib.font_manager as fm # japanize_matplotlib を使うのでこれは不要になることが多い
 import networkx as nx
 from pyvis.network import Network
 import re
 import os
 import numpy as np
 from itertools import combinations
-# from IPython.core.display import HTML # Streamlitでは st.components.v1.html を使用
+import japanize_matplotlib # Matplotlibの日本語化のため (v0.3で動作していたことを想定)
 
 # --- 定数定義 ---
 MECABRC_PATH = "/etc/mecabrc"
 DICTIONARY_PATH = "/var/lib/mecab/dic/ipadic-utf8"
 TAGGER_OPTIONS = f"-r {MECABRC_PATH} -d {DICTIONARY_PATH}"
-FONT_PATH_PRIMARY = '/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf' 
+# packages.txtでfonts-ipafont-gothicをインストールした場合のIPA Pゴシックのパス
+# japanize_matplotlib を使う場合、このパスをWordCloudに明示的に渡す必要があるか確認
+FONT_PATH_FOR_WORDCLOUD = '/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf' 
 
-# --- MeCab Taggerの初期化とセッション状態への保存 ---
-@st.cache_resource # リソースの初期化自体はキャッシュする
-def initialize_mecab_tagger_to_session():
-    # --- デバッグ情報表示 ---
-    st.sidebar.subheader("MeCab初期化デバッグ:")
-    mecabrc_exists = os.path.exists(MECABRC_PATH)
-    dicdir_exists = os.path.exists(DICTIONARY_PATH)
-    libmecab_path_check = "/usr/lib/x86_64-linux-gnu/libmecab.so.2" # 一般的なパス
-    libmecab_exists = os.path.exists(libmecab_path_check)
+# ★★★ ベースとなるストップワードリストを定義 ★★★
+DEFAULT_STOP_WORDS_SET = {
+    # 一般的な動詞・助動詞・形式名詞など (原形)
+    "する", "ある", "いる", "なる", "いう", "できる", "思う", "やる", "ない", "よい", "良い",
+    "いく", "来る", "おる", "ます", "です", "だ", "れる", "られる", "せる", "させる", "いただく",
+    # 一般的な形式名詞・代名詞など
+    "こと", "もの", "とき", "ところ", "ため", "よう", "うち", "ほう", "的", "的だ",
+    "私", "あなた", "彼", "彼女", "これ", "それ", "あれ", "ここ", "そこ", "あそこ", "方", "為", "訳", "筈",
+    # 一般的すぎる形容詞・副詞など
+    "大きい", "小さい", "高い", "低い", "嬉しい", "楽しい", "悲しい", "同じ", "様々", "色々",
+    "非常", "大変", "少し", "かなり", "いつも", "よく", "本当に", "ちょっと", "たくさん", "多く",
+    # 記号類 (原形がそのまま記号になる場合が多い)
+    "/", ":", "\"", ".", ",", "、", "。", " ", "　", 
+    "(", ")", "[", "]", "（", "）", "「", "」", "【", "】",
+    "&", "-", "_", "=", "+", "*", "%", "#", "@", "!", "?"
+}
 
-    st.sidebar.text(f"mecabrc ({MECABRC_PATH}):\n  {'存在する' if mecabrc_exists else '存在しない'}")
-    st.sidebar.text(f"辞書Dir ({DICTIONARY_PATH}):\n  {'存在する' if dicdir_exists else '存在しない'}")
-    st.sidebar.text(f"libmecab.so.2 ({libmecab_path_check}):\n  {'存在する' if libmecab_exists else '存在しない'}")
-
-    if dicdir_exists:
-        try:
-            dic_contents = os.listdir(DICTIONARY_PATH)
-            st.sidebar.text(f"辞書Dirの内容: {dic_contents}")
-            dicrc_file_path = os.path.join(DICTIONARY_PATH, "dicrc")
-            dicrc_exists_in_dir = os.path.exists(dicrc_file_path)
-            st.sidebar.text(f"dicrc ({dicrc_file_path}):\n  {'存在する' if dicrc_exists_in_dir else '存在しない'}")
-        except Exception as e_ls:
-            st.sidebar.text(f"辞書Dir内容取得エラー: {e_ls}")
-    # --- デバッグ情報表示ここまで ---
-
+# --- MeCab Taggerの初期化 (キャッシュ利用) ---
+@st.cache_resource
+def initialize_mecab_tagger():
     try:
         tagger_obj = MeCab.Tagger(TAGGER_OPTIONS)
-        tagger_obj.parse('') # 初期化のおまじない (BOM対策にもなる)
-        st.session_state['mecab_tagger_initialized'] = True
-        st.session_state['tagger_object'] = tagger_obj # Taggerオブジェクトをセッション状態に保存
-        st.sidebar.success("MeCab Tagger初期化成功 (デバッグ情報より)")
-        print("MeCab Tagger initialized and stored in session_state.") # サーバーログに出力
-        return tagger_obj # キャッシュ関数は値を返す必要があるが、実際にはセッション状態を使う
+        tagger_obj.parse('') 
+        print("MeCab Tagger initialized successfully via cache.") # サーバーログに出力
+        return tagger_obj
     except Exception as e_init:
-        st.error(f"MeCab Taggerの初期化に失敗しました: {e_init}") # UIにエラー表示
-        st.sidebar.error(f"MeCab初期化エラー: {e_init}") # サイドバーにもエラー表示
-        st.error("リポジトリに `packages.txt` が正しく設定され、MeCab関連パッケージがインストールされるか確認してください。")
-        st.session_state['mecab_tagger_initialized'] = False
-        if 'tagger_object' in st.session_state: del st.session_state['tagger_object'] # 失敗時は削除
+        # StreamlitのUI要素はメインのスクリプトフローで呼び出すべきなので、ここではログ出力に留めるか、
+        # またはエラーをraiseして呼び出し元で処理する
+        print(f"MeCab Taggerの初期化に失敗しました: {e_init}")
+        print("リポジトリに `packages.txt` が正しく設定され、MeCab関連パッケージがインストールされるか確認してください。")
         return None
 
-# --- スクリプト開始時のTagger準備 ---
-# セッション状態にTaggerがなければ（または初期化失敗していれば）初期化関数を呼び出す
-if 'tagger_object' not in st.session_state or not st.session_state.get('mecab_tagger_initialized', False):
-    print("Attempting to initialize MeCab Tagger into session state...")
-    initialize_mecab_tagger_to_session()
+tagger = initialize_mecab_tagger() # グローバルにtaggerを定義
 
-
-# --- フォントパスの決定とMatplotlibへの設定 ---
-FONT_PATH_FINAL = None
-# MeCab初期化が成功していることを前提としてフォント設定を行う
-if st.session_state.get('mecab_tagger_initialized', False):
-    if os.path.exists(FONT_PATH_PRIMARY):
-        FONT_PATH_FINAL = FONT_PATH_PRIMARY
-        st.sidebar.info(f"日本語フォント: {os.path.basename(FONT_PATH_FINAL)}")
-        try:
-            font_entry = fm.FontEntry(fname=FONT_PATH_FINAL, name=os.path.splitext(os.path.basename(FONT_PATH_FINAL))[0])
-            # fontManager.ttflist に重複して追加しないようにチェック
-            if font_entry.name not in [f.name for f in fm.fontManager.ttflist]:
-                 fm.fontManager.ttflist.append(font_entry)
-            plt.rcParams['font.family'] = font_entry.name
-            # print(f"Matplotlibのフォントとして {font_entry.name} を設定しました。") # サーバーログ
-        except Exception as e_font_setting:
-            st.sidebar.error(f"Matplotlibフォント設定エラー: {e_font_setting}")
-            # FONT_PATH_FINAL はそのまま使うが、matplotlibでの日本語表示は期待できない
-    else:
-        st.sidebar.error(f"指定IPAフォント '{FONT_PATH_PRIMARY}' が見つかりません。")
-        try:
-            # Colabや一部環境ではシステムフォントから日本語を探せる場合がある
-            font_names_ja = [f.name for f in fm.fontManager.ttflist if any(lang in f.name.lower() for lang in ['ipagp', 'ipag', 'takao', 'noto sans cjk jp', 'hiragino'])]
-            if font_names_ja:
-                FONT_PATH_FINAL = fm.findfont(fm.FontProperties(family=font_names_ja[0]))
-                plt.rcParams['font.family'] = font_names_ja[0]
-                st.sidebar.info(f"代替日本語フォントとして '{font_names_ja[0]}' ({os.path.basename(FONT_PATH_FINAL)}) を使用します。")
-            else:
-                 st.sidebar.error("利用可能な日本語フォントがMatplotlibで見つかりません。")
-        except Exception as e_alt_font:
-            st.sidebar.error(f"代替フォント検索中にエラー: {e_alt_font}")
+# --- フォントパスの確認 (WordCloud用) ---
+# japanize_matplotlib はmatplotlibの日本語化を行うが、WordCloudには別途フォントパス指定が必要
+if not os.path.exists(FONT_PATH_FOR_WORDCLOUD):
+    st.sidebar.warning(f"WordCloud用指定フォント '{FONT_PATH_FOR_WORDCLOUD}' が見つかりません。代替フォントを探します。")
+    # japanize_matplotlib が使うフォントパスを取得してみる
+    try:
+        alt_font_for_wc = japanize_matplotlib.get_font_path()
+        if os.path.exists(alt_font_for_wc):
+            FONT_PATH_FOR_WORDCLOUD = alt_font_for_wc
+            st.sidebar.info(f"WordCloud代替フォント: {os.path.basename(FONT_PATH_FOR_WORDCLOUD)}")
+        else:
+            st.sidebar.error("WordCloud用の代替日本語フォントも見つかりません。")
+            FONT_PATH_FOR_WORDCLOUD = None # WordCloudはフォントなしではエラーになる
+    except Exception as e_alt_wc_font:
+        st.sidebar.error(f"WordCloud代替フォント検索エラー: {e_alt_wc_font}")
+        FONT_PATH_FOR_WORDCLOUD = None
 else:
-    # このelseブロックは、MeCab初期化フラグがFalseまたは存在しない場合
-    if 'mecab_tagger_initialized' not in st.session_state :
-         st.sidebar.warning("MeCab初期化状態が不明です。") # 初回実行時など
-    elif not st.session_state.get('mecab_tagger_initialized', False) :
-        st.sidebar.error("MeCabが初期化されていないためフォント設定をスキップします。")
+    st.sidebar.info(f"WordCloud用フォント: {os.path.basename(FONT_PATH_FOR_WORDCLOUD)}")
 
 
 # --- 分析関数の定義 ---
-def perform_morphological_analysis(text_input):
-    tagger_instance = st.session_state.get('tagger_object')
+def perform_morphological_analysis(text_input, tagger_instance):
     if tagger_instance is None or not text_input: return []
     all_morphemes = []
     node = tagger_instance.parseToNode(text_input)
@@ -145,7 +114,7 @@ def generate_word_report(all_morphemes, target_pos_list, stop_words_set):
     for m_idx in range(len(report_target_morphemes) - 1, -1, -1):
         m = report_target_morphemes[m_idx]
         if m['原形'] not in representative_info_for_report:
-            representative_info_for_report[m['原形']] = {'品詞': m['品詞']}
+            representative_info_for_report[m['原形']] = {'品詞': m['品詞']} 
     total_all_morphemes_count_for_freq = len(all_morphemes)
     total_report_target_morphemes_count = sum(word_counts.values())
     for rank, (word, count) in enumerate(word_counts.most_common(), 1):
@@ -173,8 +142,7 @@ def generate_wordcloud_image(all_morphemes, font_path_wc, target_pos_list, stop_
         return fig
     except Exception as e_wc: st.error(f"ワードクラウド画像生成中にエラーが発生しました: {e_wc}"); return None
 
-def generate_cooccurrence_network_html(all_morphemes, text_input_co, font_path_co, target_pos_list, stop_words_set, node_min_freq, edge_min_freq):
-    tagger_instance = st.session_state.get('tagger_object')
+def generate_cooccurrence_network_html(all_morphemes, text_input_co, tagger_instance, font_path_co, target_pos_list, stop_words_set, node_min_freq, edge_min_freq):
     if not all_morphemes or tagger_instance is None or not text_input_co.strip(): st.info("共起ネットワーク生成に必要なデータが不足しています。"); return None
     if font_path_co is None or not os.path.exists(font_path_co): st.error(f"共起ネットワークのラベル表示に必要な日本語フォントパス '{font_path_co}' が見つかりません。"); return None
     temp_words_for_nodes = []
@@ -196,9 +164,11 @@ def generate_cooccurrence_network_html(all_morphemes, text_input_co, font_path_c
             node_s = node_s.next
         for pair in combinations(sorted(list(set(words_in_sentence))), 2): cooccurrence_counts_map[pair] += 1
     if not cooccurrence_counts_map: st.info("共起ペアが見つかりませんでした。"); return None
+    
     font_name_pyvis_graph = os.path.splitext(os.path.basename(font_path_co))[0]
     if font_name_pyvis_graph.lower() == 'ipagp': font_name_pyvis_graph = 'IPAPGothic'
     elif font_name_pyvis_graph.lower() == 'ipamp': font_name_pyvis_graph = 'IPAPMincho'
+    
     net_graph = Network(notebook=True, height="750px", width="100%", directed=False, bgcolor="#F5F5F5", font_color="#333333")
     for word, count in node_candidates.items():
         node_s_size = int(np.sqrt(count) * 10 + 10)
@@ -232,18 +202,7 @@ def perform_kwic_search(all_morphemes, keyword_str, search_key_type_str, window_
 st.title("テキストマイニングツール (Streamlit版)")
 st.markdown("日本語テキストを入力して、形態素解析、単語レポート、ワードクラウド、共起ネットワーク、KWIC検索を実行します。")
 
-DEFAULT_STOP_WORDS_SET = {
-    "する", "ある", "いる", "なる", "いう", "できる", "思う", "やる", "ない", "よい", "良い",
-    "いく", "来る", "おる", "ます", "です", "だ", "れる", "られる", "せる", "させる", "いただく",
-    "こと", "もの", "とき", "ところ", "ため", "よう", "うち", "ほう", "的", "的だ",
-    "私", "あなた", "彼", "彼女", "これ", "それ", "あれ", "ここ", "そこ", "あそこ", "方", "為", "訳", "筈",
-    "大きい", "小さい", "高い", "低い", "嬉しい", "楽しい", "悲しい", "同じ", "様々", "色々",
-    "非常", "大変", "少し", "かなり", "いつも", "よく", "本当に", "ちょっと", "たくさん", "多く",
-    "/", ":", "\"", ".", ",", "、", "。", " ", "　", 
-    "(", ")", "[", "]", "（", "）", "「", "」", "【", "】",
-    "&", "-", "_", "=", "+", "*", "%", "#", "@", "!", "?"
-}
-
+# --- サイドバー: オプション設定 ---
 st.sidebar.header("⚙️ 分析オプション")
 st.sidebar.markdown("**品詞選択 (各分析共通)**")
 default_target_pos = ['名詞', '動詞', '形容詞']
@@ -252,39 +211,44 @@ wc_target_pos_selected = st.sidebar.multiselect("ワードクラウド: 対象�
 net_target_pos_selected = st.sidebar.multiselect("共起Net: 対象品詞", ['名詞', '動詞', '形容詞'], default=default_target_pos)
 
 st.sidebar.markdown("**ストップワード設定**")
-default_stopwords_str_display = "\n".join(sorted(list(DEFAULT_STOP_WORDS_SET)))
-custom_stopwords_input_str = st.sidebar.text_area("共通ストップワード (原形をカンマや改行区切りで編集してください):", 
-                                             value=default_stopwords_str_display, height=250,
+# ★★★ DEFAULT_STOP_WORDS_SET をテキストエリアの初期値として表示 ★★★
+default_stopwords_str_for_ui = "\n".join(sorted(list(DEFAULT_STOP_WORDS_SET)))
+custom_stopwords_input_str_from_ui = st.sidebar.text_area("共通ストップワード (原形をカンマや改行区切りで編集してください):", 
+                                             value=default_stopwords_str_for_ui, # 初期値を設定
+                                             height=250, 
                                              help="ここに入力された単語（原形）がストップワードとして処理されます。")
-final_stop_words_set = set() 
-if custom_stopwords_input_str.strip():
-    custom_list_sw = [word.strip().lower() for word in re.split(r'[,\n]', custom_stopwords_input_str) if word.strip()]
-    final_stop_words_set.update(custom_list_sw)
-st.sidebar.caption(f"適用される総ストップワード数: {len(final_stop_words_set)}")
+# ★★★ テキストエリアの内容をそのまま最終的なストップワードセットとして使用 ★★★
+final_stop_words_set_for_analysis = set() 
+if custom_stopwords_input_str_from_ui.strip():
+    custom_list_sw_from_ui = [word.strip().lower() for word in re.split(r'[,\n]', custom_stopwords_input_str_from_ui) if word.strip()]
+    final_stop_words_set_for_analysis.update(custom_list_sw_from_ui)
+st.sidebar.caption(f"適用される総ストップワード数: {len(final_stop_words_set_for_analysis)}")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**共起ネットワーク詳細設定**")
-network_node_min_freq_val = st.sidebar.slider("ノード最低出現数:", 1, 20, 2, key="net_node_freq_slider_main")
-network_edge_min_freq_val = st.sidebar.slider("エッジ最低共起数:", 1, 10, 2, key="net_edge_freq_slider_main")
+network_node_min_freq_val_ui = st.sidebar.slider("ノード最低出現数:", 1, 20, 2, key="net_node_freq_slider_main_ui")
+network_edge_min_freq_val_ui = st.sidebar.slider("エッジ最低共起数:", 1, 10, 2, key="net_edge_freq_slider_main_ui")
 
-main_text_input_area = st.text_area("📝 分析したい日本語テキストをここに入力してください:", height=250, 
+# --- メイン画面: テキスト入力と実行ボタン ---
+main_text_input_area_val = st.text_area("📝 分析したい日本語テキストをここに入力してください:", height=250, 
                              value="これはStreamlitを使用して作成したテキスト分析ツールです。日本語の形態素解析を行い、単語の出現頻度レポート、ワードクラウド、共起ネットワーク、そしてKWIC（文脈付きキーワード検索）などを試すことができます。様々な文章で分析を実行してみてください。")
 
-analyze_button_clicked = st.button("分析実行", type="primary", use_container_width=True)
+analyze_button_clicked_event = st.button("分析実行", type="primary", use_container_width=True)
 
-if analyze_button_clicked:
-    if not main_text_input_area.strip():
+# --- 分析結果表示エリア ---
+if analyze_button_clicked_event:
+    if not main_text_input_area_val.strip():
         st.warning("分析するテキストを入力してください。")
-    elif st.session_state.get('tagger_object') is None or not st.session_state.get('mecab_tagger_initialized', False):
-        st.error("MeCab Taggerが利用できません。ページを再読み込みするか、Streamlit Cloudのログを確認してください。")
+    elif tagger is None: # MeCab Taggerが初期化失敗している場合
+        st.error("MeCab Taggerが利用できません。Streamlit Cloudのログを確認するか、管理者にお問い合わせください。")
     else:
         with st.spinner("形態素解析を実行中... しばらくお待ちください。"):
-            morphemes_data_list = perform_morphological_analysis(main_text_input_area) 
+            morphemes_data_list_result = perform_morphological_analysis(main_text_input_area_val, tagger)
         
-        if not morphemes_data_list:
+        if not morphemes_data_list_result:
             st.error("形態素解析に失敗したか、結果が空です。入力テキストを確認してください。")
         else:
-            st.success(f"形態素解析が完了しました。総形態素数: {len(morphemes_data_list)}")
+            st.success(f"形態素解析が完了しました。総形態素数: {len(morphemes_data_list_result)}")
             st.markdown("---")
 
             tab_report_view, tab_wc_view, tab_network_view, tab_kwic_view = st.tabs([
@@ -294,7 +258,7 @@ if analyze_button_clicked:
             with tab_report_view:
                 st.subheader("単語出現レポート")
                 with st.spinner("レポート作成中..."):
-                    df_report_to_show, total_morphs, total_target_morphs = generate_word_report(morphemes_data_list, report_target_pos_selected, final_stop_words_set)
+                    df_report_to_show, total_morphs, total_target_morphs = generate_word_report(morphemes_data_list_result, report_target_pos_selected, final_stop_words_set_for_analysis)
                     st.caption(f"総形態素数: {total_morphs} | レポート対象の異なり語数: {len(df_report_to_show)} | レポート対象の延べ語数: {total_target_morphs}")
                     if not df_report_to_show.empty:
                         st.dataframe(df_report_to_show.style.bar(subset=['出現数'], align='left', color='#90EE90')
@@ -306,7 +270,7 @@ if analyze_button_clicked:
                 st.subheader("ワードクラウド")
                 if FONT_PATH_FINAL:
                     with st.spinner("ワードクラウド生成中..."):
-                        fig_wc_to_show = generate_wordcloud_image(morphemes_data_list, FONT_PATH_FINAL, wc_target_pos_selected, final_stop_words_set)
+                        fig_wc_to_show = generate_wordcloud_image(morphemes_data_list_result, FONT_PATH_FINAL, wc_target_pos_selected, final_stop_words_set_for_analysis)
                         if fig_wc_to_show: st.pyplot(fig_wc_to_show)
                     st.caption(f"使用フォント: {os.path.basename(FONT_PATH_FINAL) if FONT_PATH_FINAL else '未設定'}")
                 else: st.error("日本語フォントの準備ができていません。ワードクラウドは表示できません。")
@@ -316,10 +280,9 @@ if analyze_button_clicked:
                 if FONT_PATH_FINAL:
                     with st.spinner("共起ネットワーク生成中..."):
                         html_cooc_to_show = generate_cooccurrence_network_html(
-                            morphemes_data_list, main_text_input_area, # taggerは関数内でsession_stateから取得
-                            FONT_PATH_FINAL,
-                            net_target_pos_selected, final_stop_words_set,
-                            network_node_min_freq_val, network_edge_min_freq_val)
+                            morphemes_data_list_result, main_text_input_area_val, tagger, FONT_PATH_FINAL,
+                            net_target_pos_selected, final_stop_words_set_for_analysis,
+                            network_node_min_freq_val_ui, network_edge_min_freq_val_ui)
                         if html_cooc_to_show: st.components.v1.html(html_cooc_to_show, height=750, scrolling=True)
                     st.caption(f"使用フォント (ノードラベル): {os.path.basename(FONT_PATH_FINAL) if FONT_PATH_FINAL else '未設定'}")
                 else: st.error("日本語フォントの準備ができていません。共起ネットワークは表示できません。")
@@ -330,13 +293,13 @@ if analyze_button_clicked:
                 if 'kwic_mode_idx' not in st.session_state: st.session_state.kwic_mode_idx = 0
                 if 'kwic_window_val' not in st.session_state: st.session_state.kwic_window_val = 5
 
-                kwic_keyword_input_val = st.text_input("KWIC検索キーワード:", value=st.session_state.kwic_keyword, placeholder="検索したい単語(原形推奨)...", key="kwic_keyword_input_field_tab")
+                kwic_keyword_input_val = st.text_input("KWIC検索キーワード:", value=st.session_state.kwic_keyword, placeholder="検索したい単語(原形推奨)...", key="kwic_keyword_input_field_tab_v3")
                 st.session_state.kwic_keyword = kwic_keyword_input_val
 
-                kwic_search_mode_options_list = ("原形一致", "表層形一致"); kwic_search_mode_selected_val = st.radio("KWIC検索モード:", kwic_search_mode_options_list, index=st.session_state.kwic_mode_idx, key="kwic_mode_radio_field_tab")
+                kwic_search_mode_options_list = ("原形一致", "表層形一致"); kwic_search_mode_selected_val = st.radio("KWIC検索モード:", kwic_search_mode_options_list, index=st.session_state.kwic_mode_idx, key="kwic_mode_radio_field_tab_v3")
                 st.session_state.kwic_mode_idx = kwic_search_mode_options_list.index(kwic_search_mode_selected_val)
 
-                kwic_window_val_set = st.slider("KWIC表示文脈の形態素数 (前後各):", 1, 15, st.session_state.kwic_window_val, key="kwic_window_slider_field_tab")
+                kwic_window_val_set = st.slider("KWIC表示文脈の形態素数 (前後各):", 1, 15, st.session_state.kwic_window_val, key="kwic_window_slider_field_tab_v3")
                 st.session_state.kwic_window_val = kwic_window_val_set
 
                 if kwic_keyword_input_val.strip():
@@ -344,12 +307,12 @@ if analyze_button_clicked:
                     kw_to_search = kwic_keyword_input_val.strip()
                     
                     with st.spinner(f"「{kw_to_search}」を検索中..."):
-                        results_kwic_list_data = perform_kwic_search(morphemes_data_list, kw_to_search, search_key_type_for_kwic_val, kwic_window_val_set)
+                        results_kwic_list_data = perform_kwic_search(morphemes_data_list_result, kw_to_search, search_key_type_for_kwic_val, kwic_window_val_set)
                     if results_kwic_list_data:
                         st.write(f"「{kw_to_search}」の検索結果 ({len(results_kwic_list_data)}件):"); df_kwic_to_display_final = pd.DataFrame(results_kwic_list_data); st.dataframe(df_kwic_to_display_final)
                     else: st.info(f"「{kw_to_search}」は見つかりませんでした（現在の検索モードにおいて）。")
 
 # --- フッター情報 ---
 st.sidebar.markdown("---")
-st.sidebar.info("テキストマイニングツール (Streamlit版) v0.6") # バージョンアップ
+st.sidebar.info("テキストマイニングツール (Streamlit版) v0.3-revised")
 ```
