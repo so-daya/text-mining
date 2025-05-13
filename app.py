@@ -42,19 +42,48 @@ DEFAULT_STOP_WORDS_SET = {
 }
 
 # --- MeCab Taggerの初期化 (キャッシュ利用) ---
+# app.py の initialize_mecab_tagger 関数を以下のように修正
+
 @st.cache_resource
 def initialize_mecab_tagger():
+    # --- デバッグ情報表示 ---
+    st.sidebar.subheader("MeCab初期化デバッグ:")
+    mecabrc_exists = os.path.exists(MECABRC_PATH)
+    dicdir_exists = os.path.exists(DICTIONARY_PATH)
+    libmecab_path_check = "/usr/lib/x86_64-linux-gnu/libmecab.so.2" # 一般的なパス
+    libmecab_exists = os.path.exists(libmecab_path_check)
+
+    st.sidebar.text(f"mecabrc ({MECABRC_PATH}):\n  {'存在する' if mecabrc_exists else '存在しない'}")
+    st.sidebar.text(f"辞書Dir ({DICTIONARY_PATH}):\n  {'存在する' if dicdir_exists else '存在しない'}")
+    st.sidebar.text(f"libmecab.so.2 ({libmecab_path_check}):\n  {'存在する' if libmecab_exists else '存在しない'}")
+
+    if dicdir_exists:
+        try:
+            dic_contents = os.listdir(DICTIONARY_PATH)
+            st.sidebar.text(f"辞書Dirの内容: {dic_contents}")
+            # dicrcファイルの存在確認
+            dicrc_file_path = os.path.join(DICTIONARY_PATH, "dicrc")
+            dicrc_exists = os.path.exists(dicrc_file_path)
+            st.sidebar.text(f"dicrc ({dicrc_file_path}):\n  {'存在する' if dicrc_exists else '存在しない'}")
+        except Exception as e_ls:
+            st.sidebar.text(f"辞書Dir内容取得エラー: {e_ls}")
+    # --- デバッグ情報表示ここまで ---
+
     try:
         tagger_obj = MeCab.Tagger(TAGGER_OPTIONS)
         tagger_obj.parse('') 
         st.session_state['mecab_tagger_initialized'] = True
-        # print("MeCab Tagger initialized successfully via cache.") # サーバーログに出力
+        print("MeCab Tagger initialized successfully via cache.") # これはサーバーログに出力されます
+        st.sidebar.success("MeCab Tagger初期化成功 (デバッグ情報より)") # UIにも成功を表示
         return tagger_obj
     except Exception as e_init:
-        st.error(f"MeCab Taggerの初期化に失敗しました: {e_init}")
-        st.error("リポジトリに `packages.txt` が正しく設定され、MeCab関連パッケージがインストールされるか確認してください。")
+        st.error(f"MeCab Taggerの初期化に失敗しました: {e_init}") # UIにエラー表示
+        st.sidebar.error(f"MeCab初期化エラー: {e_init}") # サイドバーにもエラー表示
+        st.error("リポジトリに `packages.txt` が正しく設定され、MeCab関連パッケージ (mecab, mecab-ipadic-utf8, libmecab-dev) がインストールされるか確認してください。")
         st.session_state['mecab_tagger_initialized'] = False
         return None
+
+# tagger = initialize_mecab_tagger() # この呼び出しは変更なし
 
 tagger = initialize_mecab_tagger()
 
