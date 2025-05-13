@@ -345,4 +345,3 @@ if analyze_button_clicked_event:
 # --- フッター情報 ---
 st.sidebar.markdown("---")
 st.sidebar.info("テキストマイニングツール (Streamlit版) v0.6-final")
-```
