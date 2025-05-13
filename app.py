@@ -346,32 +346,3 @@ if analyze_button_clicked_event:
 st.sidebar.markdown("---")
 st.sidebar.info("テキストマイニングツール (Streamlit版) v0.6-final")
 ```
-
-**主な修正点:**
-
-1.  **`DEFAULT_STOP_WORDS_SET` の定義**:
-    * `app.py` の冒頭（定数定義のあたり）に、これまでのやり取りで整備してきた一般的な日本語ストップワード（記号類や「いただく」「れる」「"」なども含む）をセットとして定義しました。
-2.  **サイドバーのストップワード入力欄 (`custom_stopwords_input_str_from_ui`)**:
-    * `value` 引数に、`DEFAULT_STOP_WORDS_SET` の内容を**カンマ区切り**の文字列 (`", ".join(sorted(list(DEFAULT_STOP_WORDS_SET)))`) にして設定しました。これにより、テキストエリアには最初からこれらのデフォルトストップワードがカンマ区切りで表示されます。
-    * （前回改行区切りで表示する形を試しましたが、今回はご要望に合わせてカンマ区切りにしています。もし改行区切りの方がよろしければ `"\n".join(...)` に戻してください。）
-    * `height=250` を追加して、複数行表示しやすくしました。
-    * `help` 引数も修正し、ここに入力されたものが最終的なストップワードリストになることを示唆するようにしました。
-3.  **`final_stop_words_set_for_analysis` の生成ロジック**:
-    * `final_stop_words_set_for_analysis = set()` と、まず空のセットで初期化します。
-    * その後、`custom_stopwords_input_str_from_ui`（テキストエリアの現在の内容）をパースし（カンマまたは改行で区切る）、その内容**のみ**を `final_stop_words_set_for_analysis` に追加します。
-    * これにより、ユーザーがテキストエリアの内容を編集（削除・追加）すれば、それがそのまま分析に使用されるストップワードリストとなります。
-4.  **MeCab Taggerの初期化と参照**:
-    * `initialize_mecab_tagger_to_session()` 関数内で `st.session_state['tagger_object']` にTaggerオブジェクトを保存し、`st.session_state['mecab_tagger_initialized']` で初期化状態を管理するロジックに戻しました。
-    * スクリプトのトップレベルでこの初期化関数を呼び出します。
-    * 分析関数内や分析実行ボタンの条件分岐では、`st.session_state.get('tagger_object')` を使ってTaggerオブジェクトを参照します。
-5.  **フォント設定**:
-    * `japanize-matplotlib` を使わない、`matplotlib.font_manager` を使ったフォント設定ロジックを維持しています。
-    * WordCloud用のフォントパスは `FONT_PATH_FINAL` を使用します。
-6.  **KWIC検索のウィジェットキー**:
-    * 他のウィジェットとキーが衝突しないように、KWIC検索タブ内のウィジェットの `key` に `_tab_v_final` のような接尾辞を追加しました。
-7.  **その他**:
-    * デバッグ用の `print` 文を一部コメントアウトまたは削除し、Streamlit UIへの情報表示（`st.sidebar.info` など）に置き換えました。
-    * バージョン情報をフッターで少し更新しました。
-
-このコードで、ご要望通りのストップワードの扱いと、安定したMeCabの初期化が実現できることを期待しています。
-お手数ですが、再度このコードで `app.py` を更新し、デプロイしてご確認くだ
